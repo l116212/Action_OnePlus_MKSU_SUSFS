@@ -26,7 +26,7 @@ on:
       kernel_name:
         description: "自定义内核名称"
         required: true
-        default: -android14-11-QQ-g1132d864665d
+        default: -android15-11-QQ-g1132d864665d
       ksu_variant:
         description: "KSU类型 (Kernel/SukiSU)"
         required: true
@@ -73,8 +73,8 @@ jobs:
 
       - name: 配置Git
         run: |
-          git config --global user.name "YourName"
-          git config --global user.email "you@example.com"
+          git config --global user.name "YourGitHubName"
+          git config --global user.email "your@email.com"
 
       - name: 安装依赖
         run: |
@@ -83,11 +83,18 @@ jobs:
             git curl python3 libncurses-dev bc flex bison \
             device-tree-compiler mtools dosfstools
 
+      - name: 安装Repo工具
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod +x ~/bin/repo
+          export PATH=~/bin:$PATH
+
       - name: 同步代码仓库
         run: |
           mkdir -p ~/kernel_build
           cd ~/kernel_build
-          repo init -u repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
                     -b refs/heads/oneplus/${{ inputs.cpu }} \
                     -m ${{ inputs.feil }}.xml --depth=1
           repo sync -j$(nproc)
