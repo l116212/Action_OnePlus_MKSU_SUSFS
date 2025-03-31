@@ -1,156 +1,182 @@
-name: Build OnePlus Kernel
-
+name: Build OnePlus Kernel (Optimized)
 on:
   workflow_dispatch:
     inputs:
-      cpu:
-        description: "CPU型号 (sm8650/sm8450)"
+      device:
+        description: "Target Device (CPU Variant)"
         required: true
-        default: sm8650
-      feil:
-        description: "配置文件名 (xxx.xml)"
+        default: 'sm8650'
+      config:
+        description: "Device Tree Config Name"
         required: true
-        default: oneplus_ace3_pro_v
-      cpud:
-        description: "处理器代号 (pineapple/mango)"
+        default: 'oneplus_ace3_pro_v'
+      processor:
+        description: "Processor Code Name"
         required: true
-        default: pineapple
-      android_version:
-        description: "Android版本 (android14/android15)"
+        default: 'pineapple'
+      android_ver:
+        description: "Target Android Version"
         required: true
-        default: android14
-      kernel_version:
-        description: "内核版本 (6.1/5.10)"
+        default: 'android14'
+      kernel_ver:
+        description: "Kernel Version"
         required: true
-        default: 6.1
+        default: '6.1'
       kernel_name:
-        description: "自定义内核名称"
+        description: "Custom Kernel Name Suffix"
         required: true
-        default: -android15-11-QQ-g1132d864665d
+        default: '-android14-11-o-g1132d864665d'
       ksu_variant:
-        description: "KSU类型 (Kernel/SukiSU)"
+        description: "KernelSU Variant"
         required: true
         type: choice
         options:
-          - Kernel
+          - Official
           - SukiSU
         default: SukiSU
       ksu_version:
-        description: "KSU版本 (tag/main)"
+        description: "KernelSU Build Variant"
         required: true
         type: choice
         options:
-          - without ksu
-          - tag
-          - main
-        default: main
-      susfs_enabled:
-        description: "启用SUSFS"
+          - Without KSU
+          - Tagged Release
+          - Main Branch
+        default: Main Branch
+      susfs_enable:
+        description: "Enable SUSFS Support"
         required: true
         type: boolean
         default: true
-      vfs_patch_enabled:
-        description: "启用VFS新钩子"
+      vfs_patch_enable:
+        description: "Enable VFS Patching (New Hooks)"
         required: true
         type: choice
         options:
-          - enable
-          - disable
-        default: enable
+          - Enable
+          - Disable
+        default: Enable
 
 jobs:
-  build:
+  build_kernel:
     runs-on: ubuntu-latest
-    env:
-      KSUVER: unknown
-      LOG_FILE: build.log
+    timeout-minutes: 120
+    environment:
+      name: Kernel Build Environment
+      url: https://github.com/your-org/your-repo/actions
 
     steps:
-      - name: 初始化环境
+      - name: Initialize Workspace
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
-      - name: 配置Git
+      - name: Maximize Disk Space
+        uses: yyc/github-actions-maximize-disk-space@v1
+        with:
+          clean-package-cache: true
+          remove-android-sdk: true
+
+      - name: Set Git Identity
         run: |
-          git config --global user.name "YourGitHubName"
+          git config --global user.name "Your Name"
           git config --global user.email "your@email.com"
 
-      - name: 安装依赖
+      - name: Install System Dependencies
         run: |
-          sudo apt update && sudo apt install -y \
-            build-essential crossbuild-essential-arm64 \
-            git curl python3 libncurses-dev bc flex bison \
-            device-tree-compiler mtools dosfstools
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache flex g++-multilib \
+            git gnupg gperf libssl-dev libxml2-utils make \
+            python3 python3-distutils python3-venv rsync unzip wget zip
 
-      - name: 安装Repo工具
+      - name: Install Repo Tool
         run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod +x ~/bin/repo
-          export PATH=~/bin:$PATH
+          curl https://storage.googleapis.com/git-repo-downloads/repo-1.13.1 > ~/bin/repo
+          chmod a+x ~/bin/repo
+          export PATH="$HOME/bin:$PATH"
 
-      - name: 同步代码仓库
+      - name: Sync Kernel Sources
         run: |
-          mkdir -p ~/kernel_build
-          cd ~/kernel_build
+          mkdir -p kernel-workspace
+          cd kernel-workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-                    -b refs/heads/oneplus/${{ inputs.cpu }} \
-                    -m ${{ inputs.feil }}.xml --depth=1
-          repo sync -j$(nproc)
+                    -b refs/heads/oneplus/${{ github.event.inputs.device }} \
+                    -m ${{ github.event.inputs.config }}.xml \
+                    --depth=1
+          repo sync -j$(nproc) --fail-fast
 
-      - name: 应用SUSFS补丁（仅SukiSU）
-        if: ${{ inputs.ksu_variant == 'SukiSU' }}
+      - name: Clean Protected Exports
         run: |
-          cd ~/kernel_build/kernel_platform
-          # 动态生成SUSFS分支名称
-          susfs_branch="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-          # 尝试克隆指定分支，失败则回退到master
-          if ! git clone -b "${susfs_branch}" https://gitlab.com/simonpunk/susfs4ksu.git; then
-            echo "警告: 分支 $susfs_branch 不存在，切换到master..."
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git
-          fi
-          # 应用补丁
-          cp susfs4ksu/kernel_patches/50_add_susfs*.patch common/
-          if ! patch -p1 < common/50_add_susfs*.patch; then
-            echo "错误: SUSFS补丁应用失败" >&2
-            exit 1
-          fi
-          # 处理SukiSU专用补丁
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
-          cp SukiSU_patch/69_hide_stuff.patch common/
-          if ! patch -p1 < common/69_hide_stuff.patch; then
-            echo "错误: 隐藏补丁应用失败" >&2
-            exit 1
-          fi
+          find kernel_platform/{common,msm-kernel}/android/ -name 'abi_gki_protected_exports*' -exec rm {} \;
 
-      - name: 配置内核
+      - name: Prepare Build Configuration
         run: |
-          cd ~/kernel_build/kernel_platform
-          # 设置内核名称
-          sed -i '$s|echo "\$res"|echo "${{ inputs.kernel_name }}"|' scripts/setlocalversion
-          # 配置选项
-          make ARCH=arm64 O=out menuconfig
-          # 保存配置
-          cp .config arch/arm64/configs/${{ inputs.kernel_name }}.config
+          sed -i 's/ -dirty//g' kernel_platform/*/scripts/setlocalversion
+          cp device/oneplus/${{ github.event.inputs.processor }}/BoardConfig.mk .
 
-      - name: 编译内核
+      - name: Integrate KernelSU
+        if: ${{ github.event.inputs.ksu_variant != 'Official' }}
         run: |
-          cd ~/kernel_build/kernel_platform
-          # 构建命令
-          ./build_with_bazel.py -t ${{ inputs.cpud }} gki --output_groups=images 2>&1 | tee $LOG_FILE
-          # 检查构建结果
-          if ! grep -q "Image.gz-dtb is ready" $LOG_FILE; then
-            echo "错误: 内核构建失败" >&2
-            exit 1
-          fi
+          local ksu_dir="kernel_platform/KernelSU"
+          mkdir -p ${ksu_dir}
+          case "${{ github.event.inputs.ksu_variant }}" in
+            SukiSU)
+              git clone --depth=1 https://github.com/ShirkNeko/KernelSU.git ${ksu_dir}/core
+              ;;
+            SuSuKernel)
+              git clone --depth=1 https://github.com/ShirkNeko/SuSuKernel.git ${ksu_dir}/core
+              ;;
+          esac
+          pushd ${ksu_dir}/core
+          git checkout ${{ github.event.inputs.ksu_version }}
+          popd
 
-      - name: 打包产物
-        uses: actions/upload-artifact@v4
+      - name: Apply SUSFS Patches
+        if: ${{ github.event.inputs.susfs_enable }}
+        run: |
+          local susfs_dir="kernel_platform/common/susfs"
+          mkdir -p ${susfs_dir}
+          curl -LO "https://gitlab.com/simonpunk/susfs4ksu/-/archive/gki-${{ github.event.inputs.android_ver }}-${{ github.event.inputs.kernel_ver }}/susfs4ksu-gki-${{ github.event.inputs.android_ver }}-${{ github.event.inputs.kernel_ver }}.tar.gz"
+          tar -xzf susfs4ksu-gki*.tar.gz -C ${susfs_dir} --strip-components=1
+          rm susfs4ksu*.tar.gz
+          cd ${susfs_dir}
+          patch -p1 < 50_add_susfs.patch
+          patch -p1 < fs/lz4k.patch
+
+      - name: Apply VFS Hooks
+        if: ${{ github.event.inputs.vfs_patch_enable == 'Enable' }}
+        run: |
+          curl -LO "https://github.com/ShirkNeko/SukiSU_patch/raw/main/hooks/new_hooks.patch"
+          patch -p1 < new_hooks.patch
+
+      - name: Configure Kernel
+        run: |
+          export ARCH=arm64 CROSS_COMPILE=aarch64-linux-android-
+          make O=out ${{ github.event.inputs.config }}_defconfig
+          make menuconfig
+
+      - name: Build Kernel
+        run: |
+          export KCFLAGS="-fno-pic"
+          make -j$(nproc) O=out \
+               KCFLAGS="${KCFLAGS}" \
+               CCACHE_DIR=/tmp/ccache \
+               CCACHE_COMPRESS=1
+
+      - name: Package Artifacts
+        run: |
+          mkdir -p artifacts
+          cp out/arch/arm64/boot/Image.gz-dtb artifacts/kernel.img
+          cp out/arch/arm64/boot/dtbo.img artifacts/dtbo.img
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
         with:
-          name: kernel-${{ inputs.kernel_name }}-${{ inputs.cpu }}
-          path: |
-            ~/kernel_build/kernel_platform/out/arch/arm64/boot/Image.gz-dtb
-            ~/kernel_build/kernel_platform/out/arch/arm64/boot/dt.img
-            ~/kernel_build/kernel_platform/out/.config
-          retention-days: 14
+          name: ${{ github.job }}_${{ github.sha }}
+          path: artifacts/*
+          retention-days: 7
+
+      - name: Clean Up
+        run: |
+          rm -rf kernel-workspace
+          rm -rf ~/.ccache
