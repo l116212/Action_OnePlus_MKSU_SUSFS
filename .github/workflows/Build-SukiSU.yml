@@ -205,33 +205,20 @@ jobs:
          sed -i '$s|echo "\$res"|echo "\${{ github.event.inputs.KERNEL_NAME }}"|' ./common/scripts/setlocalversion
          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
   
-      - name: Build kernel
-        if: github.event.inputs.CPU == 'sm8750' 
-        run: |
-         cd kernel_workspace
-         ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} gki
-          
-      - name: Fallback build kernel
-        if: github.event.inputs.CPU != 'sm8750' 
-        run: |
-         cd kernel_workspace
-         LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
-         
-      - name: Make AnyKernel3
-        run: |
-         git clone https://github.com/osm0sis/AnyKernel3 --depth=1
-         rm -rf ./AnyKernel3/.git
-         cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
-         cp kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image ./kernel_workspace/kernel
-         
-      - name: Upload AnyKernel3
-        uses: actions/upload-artifact@v4
-        with:
-         name: AnyKernel3_KernelSU_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-         path: ./AnyKernel3/*
+       - name: Build kernel
+       if: github.event.inputs.CPU == 'sm8750' 
+       run: |
+        cd kernel_workspace
+        ./kernel_platform/build_with_bazel.py -t ${{ github.event.inputs.CPUD }} gki
 
-      - name: Upload Image
-        uses: actions/upload-artifact@v4
-        with:
-         name: Image_KernelSU_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-         path: kernel_workspace/kernel
+       - name: Fallback build kernel
+       if: github.event.inputs.CPU != 'sm8750' 
+       run: |
+        cd kernel_workspace
+        LTO=thin ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} gki
+
+       - name: Upload Image
+       uses: actions/upload-artifact@v4
+       with:
+       name: Image_KernelSU_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+       path: kernel_workspace/kernel
