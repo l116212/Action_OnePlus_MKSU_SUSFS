@@ -1,4 +1,4 @@
-name: Build OnePlus Kernel (Optimized)
+name: Build OnePlus Kernel (Enterprise Grade)
 on:
   workflow_dispatch:
     inputs:
@@ -33,6 +33,7 @@ on:
         options:
           - Official
           - SukiSU
+          - SuSuKernel
         default: SukiSU
       ksu_version:
         description: "KernelSU Build Variant"
@@ -72,10 +73,9 @@ jobs:
           fetch-depth: 0
 
       - name: Maximize Disk Space
-        uses: yyc/github-actions-maximize-disk-space@v1
+        uses: technote-space/docker-action-free-disk-space@v2
         with:
-          clean-package-cache: true
-          remove-android-sdk: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set Git Identity
         run: |
