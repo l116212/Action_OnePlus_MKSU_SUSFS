@@ -1,41 +1,42 @@
-name: Build OnePlus_Kernel_a3
+name: Build OnePlus Kernel
+
 on:
   workflow_dispatch:
     inputs:
-      CPU:
-        description: "分支 (sm8650/sm8450)"
+      cpu:
+        description: "CPU型号 (sm8650/sm8450)"
         required: true
-        default: 'sm8650'
-      FEIL:
-        description: "配置文件 (xxx.xml)"
+        default: sm8650
+      feil:
+        description: "配置文件名 (xxx.xml)"
         required: true
-        default: 'oneplus_ace3_pro_v'
-      CPUD:
+        default: oneplus_ace3_pro_v
+      cpud:
         description: "处理器代号 (pineapple/mango)"
         required: true
-        default: 'pineapple'
-      ANDROID_VERSION:
-        description: "内核安卓版本 (android14/android15)"
+        default: pineapple
+      android_version:
+        description: "Android版本 (android14/android15)"
         required: true
-        default: 'android14'
-      KERNEL_VERSION:
+        default: android14
+      kernel_version:
         description: "内核版本 (6.1/5.10)"
         required: true
-        default: '6.1'
-      KERNEL_NAME:
-        description: "修改内核名称"
+        default: 6.1
+      kernel_name:
+        description: "自定义内核名称"
         required: true
-        default: '-android15-11-QQ-g1132d864665d'
-      kernelsu_variant:
-        description: "选择 KSU (Kernel/SukiSU)"
+        default: -android15-11-QQ-g1132d864665d
+      ksu_variant:
+        description: "KSU类型 (Kernel/SukiSU)"
         required: true
         type: choice
         options:
           - Kernel
           - SukiSU
         default: SukiSU
-      kernelsu_version:
-        description: "选择 KSU 版本"
+      ksu_version:
+        description: "KSU版本 (tag/main)"
         required: true
         type: choice
         options:
@@ -43,13 +44,13 @@ on:
           - tag
           - main
         default: main
-      SUSFS_ENABLED:
-        description: "添加 SUSFS"
+      susfs_enabled:
+        description: "启用SUSFS"
         required: true
         type: boolean
         default: true
-      VFS_patch_ENABLED:
-        description: "添加vfs补丁（新钩子）？"
+      vfs_patch_enabled:
+        description: "启用VFS新钩子"
         required: true
         type: choice
         options:
@@ -61,134 +62,88 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      KSUVER: "unknown"
-      BUILD_LOG: "build.log"
+      KSUVER: unknown
+      LOG_FILE: build.log
 
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
+      - name: 初始化环境
+        uses: actions/checkout@v3
         with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
-          remove-dotnet: 'false'  # 保留必要工具链
-          remove-android: 'false'
+          fetch-depth: 0
 
-      - name: Configure Git
+      - name: 配置Git
         run: |
-          git config --global user.name "ychenxuan"
-          git config --global user.email "3494167979@qq.com"
+          git config --global user.name "YourName"
+          git config --global user.email "you@example.com"
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: |
-          sudo apt update && sudo apt upgrade -y
-          sudo apt install -y python3 git curl \
-                             build-essential crossbuild-essential-arm64 \
-                             gcc-aarch64-linux-gnu libncurses-dev bc flex bison
+          sudo apt update && sudo apt install -y \
+            build-essential crossbuild-essential-arm64 \
+            git curl python3 libncurses-dev bc flex bison \
+            device-tree-compiler mtools dosfstools
 
-      - name: Install repo tool
+      - name: 同步代码仓库
         run: |
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-          chmod a+x ~/repo
-          sudo mv ~/repo /usr/local/bin/repo
-
-      - name: Initialize repo and sync
-        run: |
-          mkdir kernel_workspace && cd kernel_workspace
+          mkdir -p ~/kernel_build
+          cd ~/kernel_build
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
-                    -b refs/heads/oneplus/${{ github.event.inputs.CPU }} \
-                    -m ${{ github.event.inputs.FEIL }}.xml --depth=1
-          repo sync
-          # 清理旧版保护导出文件
-          rm -f kernel_platform/{common,msm-kernel}/android/abi_gki_protected_exports_*
+                    -b refs/heads/oneplus/${{ inputs.cpu }} \
+                    -m ${{ inputs.feil }}.xml --depth=1
+          repo sync -j$(nproc)
 
-      - name: Prepare build environment
+      - name: 应用SUSFS补丁（仅SukiSU）
+        if: ${{ inputs.ksu_variant == 'SukiSU' }}
         run: |
-          cd kernel_workspace
-          # 统一版本号处理
-          sed -i 's/ -dirty//g' kernel_platform/*/scripts/setlocalversion
-          # 强制启用调试符号
-          echo "CONFIG_DEBUG_INFO=y" >> kernel_platform/common/arch/arm64/configs/gki_defconfig
-
-      - name: Handle KernelSU/SukiSU
-        if: ${{ github.event.inputs.kernelsu_variant != 'Kernel' }}
-        run: |
-          cd kernel_workspace/kernel_platform
-          # 处理KernelSU版本
-          if [[ "${{ github.event.inputs.kernelsu_version }}" == "tag" ]]; then
-            BRANCH="-"
-          elif [[ "${{ github.event.inputs.kernelsu_version }}" == "main" ]]; then
-            BRANCH="-s susfs-stable"
+          cd ~/kernel_build/kernel_platform
+          # 动态生成SUSFS分支名称
+          susfs_branch="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          # 尝试克隆指定分支，失败则回退到master
+          if ! git clone -b "${susfs_branch}" https://gitlab.com/simonpunk/susfs4ksu.git; then
+            echo "警告: 分支 $susfs_branch 不存在，切换到master..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git
           fi
-          # 应用KernelSU/SukiSU
-          if [[ "${{ github.event.inputs.kernelsu_variant }}" == "SukiSU" ]]; then
-            curl -LSs "https://raw.githubusercontent.com/ShirkNeko/KernelSU/main/kernel/setup.sh" | bash $BRANCH
-            KSU_VERSION=$(git rev-list --count HEAD)
-            echo "KSUVER=${KSU_VERSION}" >> $GITHUB_ENV
-            # 应用SukiSU专用补丁
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-${KERNEL_VERSION}
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
-            cp susfs4ksu/kernel_patches/50_add_susfs*.patch common/
-            cp SukiSU_patch/69_hide_stuff.patch common/
-            # 应用基础补丁
-            for patch in $(find common/ -name '*.patch'); do
-              echo "Applying $patch"
-              patch -p1 < "$patch" || { echo "Patch $patch failed!"; exit 1; }
-            done
-          fi
-
-      - name: Configure kernel
-        run: |
-          cd kernel_workspace/kernel_platform
-          # 设置内核名称
-          sed -i '$s|echo "\$res"|echo "${{ github.event.inputs.KERNEL_NAME }}"|' scripts/setlocalversion
-          # 启用VFS新钩子
-          if [[ "${{ github.event.inputs.VFS_patch_ENABLED }}" == "enable" ]]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/gki_defconfig
-          else
-            echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> arch/arm64/configs/gki_defconfig
-          fi
-          # 启用SUSFS相关配置
-          for opt in \
-            CONFIG_KSU_SUSFS=y \
-            CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y \
-            CONFIG_KSU_SUSFS_SUS_PATH=y \
-            CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y \
-            CONFIG_KSU_SUSFS_ENABLE_LOG=y \
-            CONFIG_KSU_SUSFS_SPOOF_UNAME=y \
-            CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          do
-            echo "$opt" >> arch/arm64/configs/gki_defconfig
-          done
-          # 移除版本检查
-          sed -i '/check_defconfig/d' build/configs/gki_defconfig
-
-      - name: Build kernel
-        run: |
-          cd kernel_workspace/kernel_platform
-          # 执行构建并捕获日志
-          ./build_with_bazel.py -t ${{ github.event.inputs.CPUD }} gki --output_groups=images 2>&1 | tee $BUILD_LOG
-          # 查找镜像文件
-          IMAGE_PATH=$(find . -name '*.img' -o -name '*.dtb' | head -n 1)
-          if [[ ! -f "$IMAGE_PATH" ]]; then
-            echo "Error: No kernel image found!" >&2
-            echo "::error::Kernel build failed"
+          # 应用补丁
+          cp susfs4ksu/kernel_patches/50_add_susfs*.patch common/
+          if ! patch -p1 < common/50_add_susfs*.patch; then
+            echo "错误: SUSFS补丁应用失败" >&2
             exit 1
           fi
-          echo "Found image: $IMAGE_PATH"
+          # 处理SukiSU专用补丁
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          cp SukiSU_patch/69_hide_stuff.patch common/
+          if ! patch -p1 < common/69_hide_stuff.patch; then
+            echo "错误: 隐藏补丁应用失败" >&2
+            exit 1
+          fi
 
-      - name: Upload kernel image
+      - name: 配置内核
+        run: |
+          cd ~/kernel_build/kernel_platform
+          # 设置内核名称
+          sed -i '$s|echo "\$res"|echo "${{ inputs.kernel_name }}"|' scripts/setlocalversion
+          # 配置选项
+          make ARCH=arm64 O=out menuconfig
+          # 保存配置
+          cp .config arch/arm64/configs/${{ inputs.kernel_name }}.config
+
+      - name: 编译内核
+        run: |
+          cd ~/kernel_build/kernel_platform
+          # 构建命令
+          ./build_with_bazel.py -t ${{ inputs.cpud }} gki --output_groups=images 2>&1 | tee $LOG_FILE
+          # 检查构建结果
+          if ! grep -q "Image.gz-dtb is ready" $LOG_FILE; then
+            echo "错误: 内核构建失败" >&2
+            exit 1
+          fi
+
+      - name: 打包产物
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_Image_${{ github.event.inputs.FEIL }}_${{ github.event.inputs.CPU }}
+          name: kernel-${{ inputs.kernel_name }}-${{ inputs.cpu }}
           path: |
-            kernel_workspace/kernel_platform/*.img
-            kernel_workspace/kernel_platform/*.dtb
-          retention-days: 7
-
-      - name: Final verification
-        run: |
-          echo "Build completed successfully"
-          echo "Kernel version: $KERNEL_VERSION"
-          echo "KSU version: $KSUVER"
-          echo "Image path: $IMAGE_PATH"
+            ~/kernel_build/kernel_platform/out/arch/arm64/boot/Image.gz-dtb
+            ~/kernel_build/kernel_platform/out/arch/arm64/boot/dt.img
+            ~/kernel_build/kernel_platform/out/.config
+          retention-days: 14
