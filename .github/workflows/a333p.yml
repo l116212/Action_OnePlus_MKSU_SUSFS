@@ -1,101 +1,103 @@
-name: Build OnePlus Kernel (Enterprise Grade)
+name: Build OnePlus Kernel (企业级构建流程)
 on:
   workflow_dispatch:
     inputs:
       device:
-        description: "Target Device (CPU Variant)"
+        description: "目标设备 (CPU 型号)"
         required: true
         default: 'sm8650'
       config:
-        description: "Device Tree Config Name"
+        description: "设备树配置名称"
         required: true
         default: 'oneplus_ace3_pro_v'
       processor:
-        description: "Processor Code Name"
+        description: "处理器代号"
         required: true
         default: 'pineapple'
       android_ver:
-        description: "Target Android Version"
+        description: "目标安卓版本"
         required: true
         default: 'android14'
       kernel_ver:
-        description: "Kernel Version"
+        description: "内核版本"
         required: true
         default: '6.1'
       kernel_name:
-        description: "Custom Kernel Name Suffix"
+        description: "自定义内核名称后缀"
         required: true
         default: '-android14-11-o-g1132d864665d'
       ksu_variant:
-        description: "KernelSU Variant"
+        description: "KernelSU 版本类型"
         required: true
         type: choice
         options:
-          - Official
+          - 官方版本
           - SukiSU
           - SuSuKernel
         default: SukiSU
       ksu_version:
-        description: "KernelSU Build Variant"
+        description: "KernelSU 构建版本"
         required: true
         type: choice
         options:
-          - Without KSU
-          - Tagged Release
-          - Main Branch
-        default: Main Branch
+          - 不启用 KSU
+          - 标签版本
+          - 主分支版本
+        default: 主分支版本
       susfs_enable:
-        description: "Enable SUSFS Support"
+        description: "启用 SUSFS 支持"
         required: true
         type: boolean
         default: true
       vfs_patch_enable:
-        description: "Enable VFS Patching (New Hooks)"
+        description: "启用 VFS 新钩子补丁"
         required: true
         type: choice
         options:
-          - Enable
-          - Disable
-        default: Enable
+          - 启用
+          - 禁用
+        default: 启用
 
 jobs:
   build_kernel:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment:
-      name: Kernel Build Environment
+      name: 内核构建环境
       url: https://github.com/your-org/your-repo/actions
 
     steps:
-      - name: Initialize Workspace
+      - name: 初始化工作区
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 获取完整仓库历史
 
-      - name: Maximize Disk Space
-        uses: technote-space/docker-action-free-disk-space@v2
+      - name: 最大化磁盘空间
+        uses: actions/cache@v3
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ~/.cache
+          key: ${{ runner.os }}-build-${{ hashFiles('**/yarn.lock') }}
+          # 使用官方缓存清理策略
 
-      - name: Set Git Identity
+      - name: 设置 Git 用户信息
         run: |
           git config --global user.name "Your Name"
           git config --global user.email "your@email.com"
 
-      - name: Install System Dependencies
+      - name: 安装系统依赖
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache flex g++-multilib \
             git gnupg gperf libssl-dev libxml2-utils make \
             python3 python3-distutils python3-venv rsync unzip wget zip
 
-      - name: Install Repo Tool
+      - name: 安装 Repo 工具
         run: |
           curl https://storage.googleapis.com/git-repo-downloads/repo-1.13.1 > ~/bin/repo
           chmod a+x ~/bin/repo
           export PATH="$HOME/bin:$PATH"
 
-      - name: Sync Kernel Sources
+      - name: 同步内核源码
         run: |
           mkdir -p kernel-workspace
           cd kernel-workspace
@@ -105,17 +107,17 @@ jobs:
                     --depth=1
           repo sync -j$(nproc) --fail-fast
 
-      - name: Clean Protected Exports
+      - name: 清理受保护导出文件
         run: |
           find kernel_platform/{common,msm-kernel}/android/ -name 'abi_gki_protected_exports*' -exec rm {} \;
 
-      - name: Prepare Build Configuration
+      - name: 准备构建配置
         run: |
-          sed -i 's/ -dirty//g' kernel_platform/*/scripts/setlocalversion
-          cp device/oneplus/${{ github.event.inputs.processor }}/BoardConfig.mk .
+          sed -i 's/ -dirty//g' kernel_platform/*/scripts/setlocalversion  # 移除脏标记
+          cp device/oneplus/${{ github.event.inputs.processor }}/BoardConfig.mk .  # 复制设备配置
 
-      - name: Integrate KernelSU
-        if: ${{ github.event.inputs.ksu_variant != 'Official' }}
+      - name: 集成 KernelSU
+        if: ${{ github.event.inputs.ksu_variant != '官方版本' }}
         run: |
           local ksu_dir="kernel_platform/KernelSU"
           mkdir -p ${ksu_dir}
@@ -131,7 +133,7 @@ jobs:
           git checkout ${{ github.event.inputs.ksu_version }}
           popd
 
-      - name: Apply SUSFS Patches
+      - name: 应用 SUSFS 补丁
         if: ${{ github.event.inputs.susfs_enable }}
         run: |
           local susfs_dir="kernel_platform/common/susfs"
@@ -140,43 +142,43 @@ jobs:
           tar -xzf susfs4ksu-gki*.tar.gz -C ${susfs_dir} --strip-components=1
           rm susfs4ksu*.tar.gz
           cd ${susfs_dir}
-          patch -p1 < 50_add_susfs.patch
-          patch -p1 < fs/lz4k.patch
+          patch -p1 < 50_add_susfs.patch  # 应用基础补丁
+          patch -p1 < fs/lz4k.patch      # 应用LZ4压缩补丁
 
-      - name: Apply VFS Hooks
-        if: ${{ github.event.inputs.vfs_patch_enable == 'Enable' }}
+      - name: 应用 VFS 新钩子补丁
+        if: ${{ github.event.inputs.vfs_patch_enable == '启用' }}
         run: |
           curl -LO "https://github.com/ShirkNeko/SukiSU_patch/raw/main/hooks/new_hooks.patch"
-          patch -p1 < new_hooks.patch
+          patch -p1 < new_hooks.patch  # 应用VFS增强补丁
 
-      - name: Configure Kernel
+      - name: 配置内核
         run: |
           export ARCH=arm64 CROSS_COMPILE=aarch64-linux-android-
-          make O=out ${{ github.event.inputs.config }}_defconfig
-          make menuconfig
+          make O=out ${{ github.event.inputs.config }}_defconfig  # 生成基础配置
+          make menuconfig  # 交互式配置界面
 
-      - name: Build Kernel
+      - name: 编译内核
         run: |
-          export KCFLAGS="-fno-pic"
+          export KCFLAGS="-fno-pic"  # 禁用PIC模式优化
           make -j$(nproc) O=out \
                KCFLAGS="${KCFLAGS}" \
                CCACHE_DIR=/tmp/ccache \
-               CCACHE_COMPRESS=1
+               CCACHE_COMPRESS=1  # 启用压缩缓存
 
-      - name: Package Artifacts
+      - name: 打包产物
         run: |
           mkdir -p artifacts
-          cp out/arch/arm64/boot/Image.gz-dtb artifacts/kernel.img
-          cp out/arch/arm64/boot/dtbo.img artifacts/dtbo.img
+          cp out/arch/arm64/boot/Image.gz-dtb artifacts/kernel.img  # 内核镜像
+          cp out/arch/arm64/boot/dtbo.img artifacts/dtbo.img      # 设备树二进制
 
-      - name: Upload Artifacts
+      - name: 上传产物
         uses: actions/upload-artifact@v3
         with:
           name: ${{ github.job }}_${{ github.sha }}
           path: artifacts/*
-          retention-days: 7
+          retention-days: 7  # 保留7天
 
-      - name: Clean Up
+      - name: 清理工作区
         run: |
           rm -rf kernel-workspace
           rm -rf ~/.ccache
