@@ -26,7 +26,7 @@ on:
       kernel_name:
         description: "自定义内核名称"
         required: true
-        default: -android15-11-QQ-g1132d864665d
+        default: -android14-11-QQ-g1132d864665d
       ksu_variant:
         description: "KSU类型 (Kernel/SukiSU)"
         required: true
@@ -87,7 +87,7 @@ jobs:
         run: |
           mkdir -p ~/kernel_build
           cd ~/kernel_build
-          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
+          repo init -u repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
                     -b refs/heads/oneplus/${{ inputs.cpu }} \
                     -m ${{ inputs.feil }}.xml --depth=1
           repo sync -j$(nproc)
